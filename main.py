@@ -1,46 +1,51 @@
 from fastmcp import FastMCP
 import os
-import sqlite3
+import aiosqlite
+import asyncio
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "expenses.db")
 CATEGORIES_PATH = os.path.join(os.path.dirname(__file__), "categories.json")
 
 mcp = FastMCP("ExpenseTracker")
 
-def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS expenses(
+async def init_db():
+    async with aiosqlite.connect(DB_PATH) as conn:
+        
+        query = """ CREATE TABLE IF NOT EXISTS expenses(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
                 amount REAL NOT NULL,
                 category TEXT NOT NULL,
                 subcategory TEXT DEFAULT '',
                 note TEXT DEFAULT ''
-            )
-        """)
+            )"""
+        
+        await conn.execute(query)
+        await conn.commit()
 
-init_db()
+asyncio.run(init_db())
 
 @mcp.tool()
-def add_expense(date, amount, category, subcategory="", note=""):
+async def add_expense(date, amount, category, subcategory="", note=""):
     '''Add a new expense entry to the database.'''
 
-    with sqlite3.connect(DB_PATH) as conn: # Create a SQLite connection object
+    async with aiosqlite.connect(DB_PATH) as conn: # Create a SQLite connection object
         
         query = """
                 INSERT INTO expenses(date, amount, category, subcategory, note) VALUES (?,?,?,?,?)
                 """
         params = [date, amount, category, subcategory, note]
 
-        cursor = conn.execute(query,params) # Execute the query using sqlite connection object. This returns a cursor object
+        cursor = await conn.execute(query,params) # Execute the query using sqlite connection object. This returns a cursor object
+        await conn.commit()
+        
         return {"status": "ok", "id": cursor.lastrowid} # return the id of the row where the data has just been inserted
     
 @mcp.tool()
-def list_expenses(start_date, end_date):
+async def list_expenses(start_date, end_date):
     '''List expense entries within an inclusive date range.'''
 
-    with sqlite3.connect(DB_PATH) as conn:    
+    async with aiosqlite.connect(DB_PATH) as conn:    
         query = """
             SELECT id, date, amount, category, subcategory, note
             FROM expenses
@@ -49,7 +54,7 @@ def list_expenses(start_date, end_date):
             """
         params = [start_date, end_date]
 
-        cursor = conn.execute(query,params)
+        cursor = await conn.execute(query,params)
         cols = [d[0] for d in cursor.description]
 
         '''
@@ -65,7 +70,6 @@ def list_expenses(start_date, end_date):
         So, we fetch the column name by doing d[0]
         '''
 
-        res = []
         '''
         cursor.fetchall(): This fetches all rows returned by the SQL query.
 
@@ -74,7 +78,10 @@ def list_expenses(start_date, end_date):
                     (2, "2026-07-02", 200, "Travel")
                ]
         '''
-        for row in cursor.fetchall():
+        
+        res = []
+        rows = await cursor.fetchall()
+        for row in rows:
             row_dict = dict(zip(cols,row))
             res.append(row_dict)
 
@@ -100,9 +107,9 @@ def list_expenses(start_date, end_date):
         '''
 
 @mcp.tool()
-def summarize(start_date, end_date, category=None):
+async def summarize(start_date, end_date, category=None):
     '''Summarize expenses by category within an inclusive date range.'''
-    with sqlite3.connect(DB_PATH) as conn:
+    async with aiosqlite.connect(DB_PATH) as conn:
         query = (
             """
             SELECT category, SUM(amount) AS total_amount
@@ -118,11 +125,12 @@ def summarize(start_date, end_date, category=None):
 
         query += " GROUP BY category ORDER BY category ASC"
 
-        cursor = conn.execute(query, params)
+        cursor = await conn.execute(query, params)
         cols = [d[0] for d in cursor.description]
 
         res = []
-        for row in cursor.fetchall():
+        rows = await cursor.fetchall()
+        for row in rows:
             row_dict = dict(zip(cols,row))
             res.append(row_dict)
 
@@ -130,10 +138,10 @@ def summarize(start_date, end_date, category=None):
         # return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 @mcp.tool()
-def delete_expense_id(expense_id=int):
+async def delete_expense_id(expense_id: int):
     '''Delete an expense entry using its expense ID.'''
 
-    with sqlite3.connect(DB_PATH) as conn:
+    async with aiosqlite.connect(DB_PATH) as conn:
         query = (
 
             """
@@ -143,7 +151,8 @@ def delete_expense_id(expense_id=int):
         )
 
         params = [expense_id]
-        cursor = conn.execute(query, params)
+        cursor = await conn.execute(query, params)
+        await conn.commit()
 
         if cursor.rowcount == 0:
             return "This ID doesn't exist in the Database"
@@ -152,11 +161,10 @@ def delete_expense_id(expense_id=int):
             return "Deletion Successful"
         
 @mcp.tool()
-def edit_expense_id(expense_id=int):
+async def edit_expense_id(expense_id: int):
     '''Edit an expense entry using its expense ID.'''
     pass
 
-    
 @mcp.resource("expense://categories", mime_type="application/json")
 def categories():
     # Read fresh each time so you can edit the file without restarting
