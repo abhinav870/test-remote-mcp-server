@@ -1,16 +1,20 @@
 from fastmcp import FastMCP
 import os
+import sqlite3
 import aiosqlite
-import asyncio
+import tempfile
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "expenses.db")
+TEMP_DIR = tempfile.gettempdir()
+DB_PATH = os.path.join(TEMP_DIR, "expenses.db")
 CATEGORIES_PATH = os.path.join(os.path.dirname(__file__), "categories.json")
 
 mcp = FastMCP("ExpenseTracker")
 
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as conn:
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
         
+        conn.execute("PRAGMA journal_mode=WAL")
+
         query = """ CREATE TABLE IF NOT EXISTS expenses(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
@@ -20,26 +24,29 @@ async def init_db():
                 note TEXT DEFAULT ''
             )"""
         
-        await conn.execute(query)
-        await conn.commit()
+        conn.execute(query)
 
-asyncio.run(init_db())
+init_db()        
 
 @mcp.tool()
 async def add_expense(date, amount, category, subcategory="", note=""):
     '''Add a new expense entry to the database.'''
 
-    async with aiosqlite.connect(DB_PATH) as conn: # Create a SQLite connection object
-        
-        query = """
-                INSERT INTO expenses(date, amount, category, subcategory, note) VALUES (?,?,?,?,?)
-                """
-        params = [date, amount, category, subcategory, note]
+    try:
+        async with aiosqlite.connect(DB_PATH) as conn: # Create a SQLite connection object
+            
+            query = """
+                    INSERT INTO expenses(date, amount, category, subcategory, note) VALUES (?,?,?,?,?)
+                    """
+            params = [date, amount, category, subcategory, note]
 
-        cursor = await conn.execute(query,params) # Execute the query using sqlite connection object. This returns a cursor object
-        await conn.commit()
+            cursor = await conn.execute(query,params) # Execute the query using sqlite connection object. This returns a cursor object
+            await conn.commit()
+            
+            return {"status": "ok", "id": cursor.lastrowid} # return the id of the row where the data has just been inserted
         
-        return {"status": "ok", "id": cursor.lastrowid} # return the id of the row where the data has just been inserted
+    except Exception as e:
+        return {"status":"error", "message": str(e)}
     
 @mcp.tool()
 async def list_expenses(start_date, end_date):
